@@ -1,0 +1,14 @@
+apiVersion: 1
+
+# Loads any dashboard JSON dropped in this folder.
+# We'll add the actual dashboards in milestone 7 (Grafana dashboards).
+
+providers:
+  - name: pulse
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

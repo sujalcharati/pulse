@@ -1,0 +1,114 @@
+# =====================================================================
+# Pulse — local development stack
+#
+# Brings up:
+#   - Postgres     (operational data: conversations, messages)
+#   - ClickHouse   (analytics: inference logs, aggregations)
+#   - Redis        (event-driven queue via Streams)
+#   - Grafana      (dashboards backed by ClickHouse)
+#
+# Usage:
+#   docker compose up -d     # start everything in background
+#   docker compose logs -f   # tail logs
+#   docker compose down      # stop (keeps data in volumes)
+#   docker compose down -v   # stop + wipe all data
+# =====================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pulse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulse_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-pulse}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulse} -d ${POSTGRES_DB:-pulse}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pulse
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    container_name: pulse-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-pulse}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_SKIP_USER_SETUP: 1
+    ports:
+      - "${CLICKHOUSE_PORT:-8123}:8123"   # HTTP interface (web UI at /play)
+      - "9000:9000"                       # native TCP
+    volumes:
+      - chdata:/var/lib/clickhouse
+      - ./infra/clickhouse:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      # 127.0.0.1 (not "localhost") because the alpine image resolves
+      # localhost to ::1 first, and CH only binds IPv4 inside the container.
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8123/ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pulse
+
+  redis:
+    image: redis:7-alpine
+    container_name: pulse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - pulse
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: pulse-grafana
+    restart: unless-stopped
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports:
+      - "3001:3000"                       # 3001 to avoid clashing with Next.js
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - pulse
+
+volumes:
+  pgdata:
+  chdata:
+  redisdata:
+  grafanadata:
+
+networks:
+  pulse:
+    driver: bridge

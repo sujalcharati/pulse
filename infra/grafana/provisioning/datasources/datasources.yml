@@ -1,0 +1,22 @@
+apiVersion: 1
+
+# Auto-provisioned datasources so Grafana boots ready-to-query.
+# ClickHouse is the only analytics source we use for dashboards.
+
+datasources:
+  - name: ClickHouse
+    # uid is pinned so dashboards can reference this datasource by a
+    # stable id across re-provisions. Without this, Grafana would
+    # auto-generate a uid on first boot and our committed dashboards
+    # would point at a stale id after a docker compose down -v.
+    uid: pulse-clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: true
+    jsonData:
+      host: clickhouse
+      port: 9000
+      protocol: native
+      defaultDatabase: pulse
+      username: default
+    editable: true
