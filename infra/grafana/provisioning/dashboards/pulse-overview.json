@@ -1,0 +1,282 @@
+{
+  "title": "Pulse — LLM Observability",
+  "uid": "pulse-overview",
+  "tags": ["pulse"],
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Requests (window)",
+      "description": "Total LLM calls in the selected time range.",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT count() AS requests FROM pulse.inference_logs WHERE $__timeFilter(timestamp)",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "95th-percentile end-to-end latency over the window. Computed off the raw table; the materialized view powers the time-series panel below.",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1500 },
+              { "color": "red", "value": 5000 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT quantile(0.95)(latency_ms) AS p95_ms FROM pulse.inference_logs WHERE status='success' AND $__timeFilter(timestamp)",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Error rate",
+      "description": "Share of calls with status='error'. Driven by the LowCardinality error_code enum; full messages live in error_message.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT countIf(status='error') * 100.0 / nullIf(count(), 0) AS error_pct FROM pulse.inference_logs WHERE $__timeFilter(timestamp)",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total tokens",
+      "description": "Sum of total_tokens (MATERIALIZED column = input + output). Computed cheaply because the value is stored, not derived at query time.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT sum(total_tokens) AS total FROM pulse.inference_logs WHERE $__timeFilter(timestamp)",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Request rate by provider (per minute)",
+      "description": "Reads the inference_logs_1m materialized view — pre-aggregated, so dashboards don't scan the raw table on every refresh.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": { "mode": "normal", "group": "A" },
+            "lineWidth": 0
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT bucket AS t, provider, sum(request_count) AS requests FROM pulse.inference_logs_1m WHERE $__timeFilter(bucket) GROUP BY bucket, provider ORDER BY bucket",
+          "format": 0
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Latency p50 / p95 / p99",
+      "description": "quantilesTDigestMerge over the materialized view's tDigest state. The 3 levels are stored in one AggregateFunction column; we just unpack them here.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "spanNulls": true,
+            "pointSize": 4
+          }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT bucket AS t, arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_quantile_state), 1) AS p50, arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_quantile_state), 2) AS p95, arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_quantile_state), 3) AS p99 FROM pulse.inference_logs_1m WHERE $__timeFilter(bucket) AND status='success' GROUP BY bucket ORDER BY bucket",
+          "format": 0
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Token usage by model",
+      "description": "Sum of input + output tokens grouped by model. Demonstrates the model column is LowCardinality (no string scan needed).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "axisLabel": "tokens" }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "showValue": "auto",
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT model, sum(input_tokens) AS input_tokens, sum(output_tokens) AS output_tokens FROM pulse.inference_logs WHERE $__timeFilter(timestamp) GROUP BY model ORDER BY input_tokens + output_tokens DESC",
+          "format": 1
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recent calls",
+      "description": "Tail of inference_logs. The trace_id column joins to the assistant message in Postgres for end-to-end forensics.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "left" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "latency_ms" },
+            "properties": [{ "id": "unit", "value": "ms" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-text" }
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  { "type": "value", "options": { "success": { "color": "green", "index": 0 } } },
+                  { "type": "value", "options": { "error":   { "color": "red",   "index": 1 } } }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "footer": { "show": false } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-clickhouse-datasource", "uid": "pulse-clickhouse" },
+          "rawSql": "SELECT timestamp, provider, model, status, latency_ms, total_tokens, error_code, trace_id FROM pulse.inference_logs WHERE $__timeFilter(timestamp) ORDER BY timestamp DESC LIMIT 30",
+          "format": 1
+        }
+      ]
+    }
+  ]
+}
