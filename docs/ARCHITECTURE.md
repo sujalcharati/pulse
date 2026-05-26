@@ -2,9 +2,32 @@
 
 This document walks through how Pulse is put together, end-to-end. Read this when you want to know **why** the code looks the way it does. For setup, see the top-level [README](../README.md).
 
-![Pulse end-to-end data flow](./architecture.svg)
+![Pulse end-to-end data flow](./architecture.png)
 
-> *Source file: [architecture.drawio](./architecture.drawio) — open in [draw.io](https://app.diagrams.net) or the VS Code Draw.io extension to edit. The SVG embeds the source XML, so you can also drop the SVG itself back into draw.io.*
+> *Editable source: [architecture.drawio](./architecture.drawio) — open in [draw.io](https://app.diagrams.net) or the VS Code Draw.io extension. Re-export to `architecture.png` after edits.*
+
+### Reading order
+
+| # | Step |
+|---|---|
+| ① | User types a message in the browser. |
+| ② | Browser POSTs to `/api/chat` — Next.js streams the response back as ndjson. |
+| ③ | The API route calls the SDK's `chatStream()` — SDK lives in the same Node process. |
+| ④ | Around the SDK call, the route writes the user msg and (when done) the assistant msg to Postgres. |
+| ⑤ | SDK opens a streaming HTTPS request to Gemini or Groq. Each delta is forwarded to the browser. |
+| ⑥ | When the call ends, SDK pushes a `LogEvent` to an in-memory buffer. Every 1s a flush tick POSTs the batch to ingestion. POST failure → exponential backoff. **Dashed arrow** because this is asynchronous — the chat request has already returned. |
+| ⑦ | Ingestion Zod-validates the batch, then `XADD`s each event onto the Redis Stream. |
+| ⑧ | A worker on the same process reads via `XREADGROUP` (consumer group = at-least-once delivery). |
+| ⑨ | Worker re-validates, redacts PII (emails / keys / phones) in previews, bulk-inserts into ClickHouse, then `XACK`s. If the CH insert fails: do **not** ack → Redis re-delivers on the next loop. |
+| ⑩ | Grafana queries ClickHouse (raw table + 1-minute materialized-view rollup) for the dashboards. |
+
+### Why the design looks like this
+
+- **Postgres for chat, ClickHouse for telemetry.** Postgres is great at *"last 20 messages for conversation X"* (random access). ClickHouse is great at *"p95 latency by provider over the last 24h"* (analytical scans over millions of rows). One DB for both = slow chats OR slow dashboards.
+- **SDK logs are fire-and-forget.** A logging outage must never break the user's chat call. So: in-memory buffer, drop-oldest on overflow, retry the network with exponential backoff.
+- **Redis Streams between HTTP and ClickHouse.** Decouples *accepting events* (fast, must not lose them) from *inserting events* (slow, batch-friendly). At-least-once delivery via `XACK` after a successful insert — if the worker crashes mid-insert, Redis re-delivers.
+- **PII redaction on the consumer side, not in the SDK.** Ingestion is the trust boundary that decides what's safe to persist. One place to update rules.
+- **`trace_id` flows everywhere** (SDK → Postgres `messages.trace_id` → ClickHouse `inference_logs.trace_id`). Lets you jump from a Grafana row back to the actual chat.
 
 ---
 
