@@ -40,3 +40,6 @@ grafanadata/
 # Coverage
 coverage/
 .nyc_output/
+
+# Local-only docs
+docs/HANDOFF.md
